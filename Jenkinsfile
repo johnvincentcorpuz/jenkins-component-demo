@@ -1,117 +1,81 @@
-pipeline {
+@Library(['maas-jenkins-library@master']) _
 
-    agent any
+
+import com.cloudbees.hudson.plugins.folder.Folder
+import jenkins.branch.OrganizationFolder
+import org.jenkinsci.plugins.workflow.job.WorkflowJob
+import org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject
+import hudson.model.Item
+
+
+pipeline {
+    agent {
+        kubernetes {
+            label "delete-old-builds-${UUID.randomUUID().toString().substring(0, 8)}"
+            yaml """
+      apiVersion: v1 
+      kind: Pod 
+      spec:
+        containers: 
+          - name: jenkins-slave
+            image: jenkins/jnlp-slave:3.35-5-alpine
+            imagePullPolicy: Always
+            command: ['cat']
+            tty: true
+      """
+        }
+    }
+
+    triggers { cron('0 3 * * *') }
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '30', daysToKeepStr: '15'))
+        buildDiscarder(logRotator(numToKeepStr: '5', daysToKeepStr: '5'))
     }
-
-    environment {
-        project_version = ""
-        maas_version = ""
-        release_url = ""
-        // install_name ="${maas_id}-${maas_instance_id}"
-        //IMAGE_ID="bla"
-        //HASH="la"
-    }
-
-    // scm {
-    //     git {
-    //         remote {
-    //             github('johnvincentcorpuz/jenkins-component-demo2')
-    //             refspec('+refs/heads/*:refs/remotes/origin/* +refs/pull/*:refs/remotes/origin/pr/*')
-    //         }
-    //         branch('**')
-    //     }
-    // }
-
-    // triggers {
-    //     githubPullRequest {
-    //         triggerPhrase('run test')
-    //         onlyTriggerPhrase()
-    //         useGitHubHooks()
-    //         permitAll()
-    //         autoCloseFailedPullRequests()
-    //         displayBuildErrorsOnDownstreamBuilds()
-    //         allowMembersOfWhitelistedOrgsAsAdmin()
-    //         extensions {
-    //             commitStatus {
-    //                 context('deploy to staging site')
-    //                 triggeredStatus('starting deployment to staging site...')
-    //                 startedStatus('deploying to staging site...')
-    //                 addTestResults(true)
-    //                 statusUrl('http://mystatussite.com/prs')
-    //                 completedStatus('SUCCESS', 'All is well')
-    //                 completedStatus('FAILURE', 'Something went wrong. Investigate!')
-    //                 completedStatus('PENDING', 'still in progress...')
-    //                 completedStatus('ERROR', 'Something went really wrong. Investigate!')
-    //             }
-    //             buildStatus {
-    //                 completedStatus('SUCCESS', 'There were no errors, go have a cup of coffee...')
-    //                 completedStatus('FAILURE', 'There were errors, for info, please see...')
-    //                 completedStatus('ERROR', 'There was an error in the infrastructure, please contact...')
-    //             }
-    //         }
-    //     }
-    // }
 
     stages {
-        stage('Setup') {
+        stage('Clean Old Builds') {
             steps {
-                checkout scm
                 script {
-                    sh('ls')
-                }
-            }
-        }
-        stage('Install') {
-            steps {
-              
-                script {
-                    sh ('ls')
-                }
-            }
-        }
-        stage('Test') {
-            steps {
-                sh ('ls')
-            }
-        }
-    }
-
-    post {
-        always {
-            timestamps {
-                echo "Finished Running Job"
-                echo "Environment Variables"
-                sh('printenv')
-            }
-        }
-        success {
-            timestamps {
-                script {
-                    echo "success"
-                    // githubNotify description: 'This is a shorted example',  status: 'SUCCESS'
-               
-                }
-            }
-        }
-        failure {
-            timestamps {
-                script {
-                    echo "sending failure message"
-                }
-            }
-        }
-        aborted {
-            timestamps {
-                script {
-                    echo "aborted failure message"
+                    for (item in Jenkins.instance.items) {
+                        if (item.getName() == 'build'){
+                            echo "Clean Builds Only"
+                            deleteOldBuilds(item)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
+void deleteOldBuilds(Item item) {
+    if(item instanceof Project) {
+        echo "PROJECT:(${item.getName()})"
+    } else if(item instanceof Folder) {
 
+        echo "FOLDER: (${item.getName()})"
+        for (subItem in item.items) {
+            deleteOldBuilds(subItem)
+        }
+    } else if(item instanceof WorkflowMultiBranchProject) {
+        echo "MULTIBRANCH-PROJECT: ${item.getName()}"
+        for (subItem in item.items) {
+            deleteOldBuilds(subItem)
+        }
+    }  else if(item instanceof WorkflowJob) {
+        if (!item.isBuildable()){
+            echo "MULTIBRANCH-JOB: (${item.getName()} Buildable: ${item.isBuildable()}"
+            //item.delete()
+        }
+    } else if(item instanceof OrganizationFolder) {
+        echo "ORG-FOLDER: ${item.getName()}"
+        for (subItem in item.items) {
+            deleteOldBuilds(subItem)
+        }
+    } else {
+        echo "UNKNOWN: ${item.getName()}"
+        echo "CLASS: ${item.getClass()}"
+        echo "INSPECT: ${item.inspect()}"
+    }
+}
 
